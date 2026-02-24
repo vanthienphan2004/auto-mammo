@@ -1,6 +1,5 @@
 <p align="center">
-  <img src="frontend/public/logo.svg" alt="AutoMammo Logo" width="120" />
-  <h1 align="center">AutoMammo</h1>
+  <img src="frontend/public/logo.svg" alt="AutoMammo Logo" width="300" />
   <p align="center">
     <strong>Density &amp; BI-RADS – Aware Triage and Report Generation (DB-ATRG) System</strong>
   </p>
