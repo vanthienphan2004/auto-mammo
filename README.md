@@ -1,5 +1,6 @@
 <p align="center">
-  <h1 align="center">🩺 AutoMammo</h1>
+  <img src="frontend/public/logo.svg" alt="AutoMammo Logo" width="120" />
+  <h1 align="center">AutoMammo</h1>
   <p align="center">
     <strong>Density &amp; BI-RADS – Aware Triage and Report Generation (DB-ATRG) System</strong>
   </p>
@@ -69,6 +70,9 @@ auto-mammo/
 │       ├── types/            # TypeScript type definitions
 │       └── data/             # Mock data & queue configuration
 └── notebooks/        # Training & experimentation notebooks
+    ├── config/           # Model prompts & training configuration
+    │   └── prompts.yaml
+    └── train_colab.ipynb
 ```
 
 ## Tech Stack
