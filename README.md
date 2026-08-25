@@ -1,156 +1,169 @@
-<p align="center">
-  <img src="frontend/public/logo.svg" alt="AutoMammo Logo" width="300" />
-  <p align="center">
-    <strong>Density &amp; BI-RADS – Aware Triage and Report Generation (DB-ATRG) System</strong>
-  </p>
-  <p align="center">
-    AI-powered mammography report generation and urgency-based case triage for radiologists.
-  </p>
-</p>
+# AutoMammo
+
+**Density & BI-RADS–Aware Triage and Report Generation (DB-ATRG)**
+
+Research code for fine-tuning [MedGemma 1.5 4B-it](https://ai.google.dev/gemma/docs/medgemma)
+to generate structured mammography reports from a single 2D view, and to estimate the two
+biomarkers that drive urgency triage — **ACR breast density** and **BI-RADS category**.
+
+> **Scope.** This repository is the experimentation pipeline only. The FastAPI inference
+> server and React worklist UI that previously lived here have been removed; what remains is
+> the notebook chain that builds the dataset, fine-tunes the model, and evaluates it.
 
 ---
 
-## Overview
+## Motivation
 
-**AutoMammo** is a full-stack clinical decision-support application that helps radiologists by:
+Screening mammography is typically read First-In, First-Out. That ordering ignores diagnostic
+complexity: in dense breast tissue, lesions can be obscured by overlying fibroglandular tissue
+("masking bias"), so the cases most at risk of a missed or delayed diagnosis are not the ones
+read first.
 
-1. **Generating structured mammography reports** from uploaded mammogram images using a fine-tuned [MedGemma 1.5 4B-it](https://ai.google.dev/gemma/docs/medgemma) vision-language model.
-2. **Triaging cases by clinical urgency** — replacing the traditional FIFO (First-In, First-Out) worklist with an intelligent queue that prioritizes high-risk patients based on ACR breast density and BI-RADS severity scores.
+DB-ATRG estimates density and severity *before* formal radiologist review, and uses them to
+reorder the worklist:
 
-> Traditional mammography workflows process cases in arrival order, which can delay diagnosis for patients with dense breast tissue or high-severity findings. AutoMammo reorders the worklist so the most critical cases are reviewed first.
+- **Phase I — density flagging.** Examinations classified **ACR D** (extremely dense) are
+  flagged for supplemental screening and complexity-aware review.
+- **Phase II — urgency ranking.** Remaining cases are ordered by a cumulative urgency score
 
-## Key Features
+  $$S = \sum_{i=1}^{N} (B_i)^k - D$$
 
-| Feature | Description |
-|---|---|
-| **AI Report Generation** | Upload a mammogram and receive a structured radiology report with breast composition, BI-RADS category, and findings. |
-| **Urgency Scoring** | Each case is automatically scored using a cumulative urgency formula based on BI-RADS and ACR density. |
-| **Priority Queue** | Cases are sorted by urgency score so radiologists review the most critical patients first. |
-| **Density Flagging** | ACR Category D (Extremely Dense) cases are automatically flagged for supplemental screening. |
-| **Patient Archive** | Browse and review all previously uploaded mammography scans. |
-| **Authentication** | Secure access via Clerk authentication. |
+  where $B_i$ is the BI-RADS category of each finding, $N$ the number of abnormalities, $k$ an
+  exponential weight (default 2), and $D$ the ACR density value (A=1, B=2, C=3). Higher $S$
+  means higher clinical priority.
 
-## How the Urgency Score Works
+The full rationale, impact case, and published evaluation are in [`writeup.md`](writeup.md).
 
-The urgency score $S$ is calculated as:
+## Repository layout
 
-$$S = \sum_{i=1}^{N} (B_i)^k - D$$
-
-Where:
-
-- $B_i$ = BI-RADS category for each finding
-- $k$ = exponential weight (default: 2)
-- $N$ = total number of abnormalities
-- $D$ = ACR Density value (A=1, B=2, C=3)
-
-Higher scores indicate higher clinical priority.
-
-## Architecture
-
-```
+```text
 auto-mammo/
-├── backend/          # FastAPI + MedGemma inference server
-│   └── src/
-│       ├── main.py
-│       └── app/
-│           ├── config/       # Prompts & local configuration
-│           ├── core/         # Settings, database, enums, logging
-│           ├── models/       # SQLAlchemy ORM models
-│           ├── routers/      # API route handlers
-│           ├── services/     # Business logic & model inference
-│           └── utils/        # YAML parser & helpers
-├── frontend/         # React + TypeScript SPA
-│   └── src/
-│       ├── components/       # UI & dashboard components
-│       ├── pages/            # Page-level views
-│       ├── routes/           # TanStack Router file-based routing
-│       ├── services/         # API client & Axios config
-│       ├── hooks/            # Custom React hooks
-│       ├── types/            # TypeScript type definitions
-│       └── data/             # Mock data & queue configuration
-└── notebooks/        # Training & experimentation notebooks
-    ├── config/           # Model prompts & training configuration
-    │   └── prompts.yaml
-    └── train_colab.ipynb
+├── config/
+│   └── prompts-cot-zeroshot.yaml      # `zero_shot` is the prompt used for training + eval
+├── notebooks/
+│   ├── medgemma-image-processing.ipynb    # 1. DMID .tif → breast-cropped .png
+│   ├── medgemma-report-processing.ipynb   # 2. DMID + VinDr reports → one canonical template
+│   ├── medgemma-split.ipynb               # 3. Stratified train/val/test DatasetDict
+│   ├── medgemma-train-eval.ipynb          # 4. QLoRA fine-tune + held-out evaluation
+│   └── medgemma-analysis.ipynb            # 5. Confusion matrices, calibration, figures
+├── README.md
+└── writeup.md
 ```
 
-## Tech Stack
+## The pipeline
 
-### Backend
+Run the notebooks in order. Each writes its output to Google Drive for the next to pick up.
 
-- **Framework:** [FastAPI](https://fastapi.tiangolo.com/)
-- **AI Model:** [MedGemma 1.5 4B-it](https://ai.google.dev/gemma/docs/medgemma) with LoRA adapters via [PEFT](https://github.com/huggingface/peft)
-- **ML Libraries:** PyTorch, Transformers, Pillow
-- **Database:** SQLAlchemy (async) with PostgreSQL
-- **Server:** Uvicorn
+| # | Notebook | Runtime | In → Out |
+| --- | --- | --- | --- |
+| 1 | `medgemma-image-processing` | CPU | DMID `.tif` → `.png`: 5-px border crop, intensity rescale to 8-bit, breast-region crop, resize to 912×1520. VinDr uses the released Mammo-CLIP PNGs and skips this step. |
+| 2 | `medgemma-report-processing` | CPU | DMID free-text reports are reformatted, and VinDr reports are synthesised from its label CSVs, into **one canonical template** so the model sees a single surface form. |
+| 3 | `medgemma-split` | CPU | Merged corpus → stratified `DatasetDict`. Validation and test are fixed at 1,000 records each; train is rebalanced BI-RADS-primary / ACR-secondary, with augmentation flagged on oversampled duplicates only. |
+| 4 | `medgemma-train-eval` | **GPU** | QLoRA fine-tune, then generation on the held-out test split with closed-set ACR/BI-RADS probabilities, imbalance-aware metrics, and calibration. |
+| 5 | `medgemma-analysis` | CPU | Confusion matrices, per-finding detection, split composition, reliability diagrams, ordinal and clinical-safety metrics. |
 
-### Frontend
+### Canonical report format
 
-- **Framework:** [React 19](https://react.dev/) with TypeScript
-- **Build Tool:** [Vite 7](https://vite.dev/)
-- **Routing:** [TanStack Router](https://tanstack.com/router)
-- **Data Fetching:** [TanStack Query](https://tanstack.com/query)
-- **Styling:** [Tailwind CSS 4](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/) + [Radix UI](https://www.radix-ui.com/)
-- **Auth:** [Clerk](https://clerk.com/)
-- **HTTP Client:** [Axios](https://axios-http.com/)
+Both corpora are normalised to the same layout, which keeps the target machine-parseable:
 
-## Getting Started
+```text
+Breast Composition: <density description> (ACR <A|B|C|D>).
 
-### Prerequisites
+BI-RADS: <comma-separated categories, e.g. "3" or "3, 5">
 
-- **Python** 3.11+
-- **Node.js** 20+ and [pnpm](https://pnpm.io/)
-- **PostgreSQL** database
-- **Hugging Face** account with access to the MedGemma model
-- **Clerk** account for authentication
-
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/your-username/auto-mammo.git
-cd auto-mammo
+Findings:
+- <finding description, ending with (BI-RADS <value>) when abnormal>
+- <finding description>
 ```
 
-### 2. Set up the backend
+Asymmetry findings are excluded from both corpora by design — a single mammographic view
+cannot establish asymmetry.
 
-```bash
-cd backend/src
-cp .env.example .env
-# Fill in DATABASE_URL, HF_TOKEN in .env
+## Data
 
-pip install -r requirements.txt
-python main.py
+| Dataset | Role | Notes |
+| --- | --- | --- |
+| [DMID](https://doi.org/10.6084/m9.figshare.24522883.v2) | Reports + images | 510 paired high-resolution mammograms with radiologist-written diagnostic reports. |
+| [VinDr-Mammo](https://doi.org/10.13026/br2v-7517) | Images + labels | 20,000 images across 5,000 studies. Reports are **synthesised** from the breast-level and finding annotations into the DMID template. |
+
+Neither dataset is redistributed here — obtain both from their sources.
+
+### Expected Drive layout
+
+The notebooks read from a single root (`ROOT_DIR` in each notebook's config cell), laid out as:
+
+```text
+MedGemma2026/main/
+├── config/
+│   └── prompts-cot-zeroshot.yaml
+├── data/
+│   ├── dmid/
+│   │   ├── images-original/       # .tif source
+│   │   ├── images-processed/      # .png, written by notebook 1
+│   │   ├── reports-original/      # .txt source
+│   │   └── reports-processed/     # .txt, written by notebook 2
+│   ├── vindr-mammo/
+│   │   ├── images-processed/<study_id>/<image_id>.png
+│   │   ├── reports/               # written by notebook 2
+│   │   ├── breast-level_annotations.csv
+│   │   └── finding_annotations.csv
+│   └── split/                     # DatasetDict, written by notebook 3
+└── results/                       # predictions + metrics, written by notebook 4
 ```
 
-The API server starts at `http://localhost:5001`.
+## Model & training
 
-### 3. Set up the frontend
+- **Base:** `google/medgemma-1.5-4b-it` — a vision-language model whose MedSigLIP encoder is
+  pre-trained on 33M medical image-text pairs.
+- **Adaptation:** QLoRA — 4-bit NF4 weights with double quantization, bf16 compute; LoRA rank
+  16 over all linear layers, plus `lm_head` and `embed_tokens`.
+- **Batching:** per-device batch 8 × gradient accumulation 32 (effective 256), linear schedule,
+  `eval_loss` on the validation split for checkpoint selection.
+- **Prompt:** a single fixed structured prompt (`zero_shot` in
+  [`config/prompts-cot-zeroshot.yaml`](config/prompts-cot-zeroshot.yaml)) specifying the ACR
+  and BI-RADS lexicons and the exact output format. The same prompt is used for training,
+  validation loss, and test generation.
 
-```bash
-cd frontend
-cp .env.example .env
-# Fill in VITE_CLERK_PUBLISHABLE_KEY, VITE_API_URL in .env
+A `chain_of_thought` variant is drafted in the same file for a future ablation; it is not
+loaded by any notebook.
 
-pnpm install
-pnpm dev
-```
+## Results
 
-The dev server starts at `http://localhost:5173`.
-
-> For more detailed setup instructions, see the [Backend README](./backend/README.md) and [Frontend README](./frontend/README.md).
-
-## Model Details
-
-AutoMammo uses a fine-tuned **MedGemma 1.5 4B-it** model (`chocoCaro/medgemma-1.5-4b-it-sft-lora-dmid`) trained on the [DMID dataset](https://doi.org/10.6084/m9.figshare.24522883.v2) (510 paired mammograms and diagnostic reports) using QLoRA (4-bit NF4 quantization).
+The table below is the **published evaluation** — MedGemma 1.5 4B-it fine-tuned on DMID only,
+compared against the MedGemma 1.0 AMRG baseline (Sung et al., 2025). Full details are in the
+preprint ([doi:10.64898/2026.07.22.26358655](https://doi.org/10.64898/2026.07.22.26358655)):
 
 | Metric | AMRG Baseline (MedGemma 1.0) | DB-ATRG (MedGemma 1.5) |
-|---|---|---|
+| --- | --- | --- |
 | BLEU-4 | N/A | **0.4730** |
-| ROUGE-L | 0.4968 | **0.6693** |
-| METEOR | 0.5541 | **0.7187** |
+| ROUGE-L | 0.4968 | **0.8650** |
+| METEOR | 0.5541 | **0.9001** |
 | Word-Level F1 | 0.4978 | **0.6789** |
 | BI-RADS Accuracy | 0.3529 | **0.4276** |
 | ACR Density Accuracy | 0.4902 | **0.7039** |
+
+On a simulated cohort of 100 cases, the DB-ATRG priority queue surfaced **every** BI-RADS 4/5
+malignancy within the first **20%** of the reading workload versus **40%** for FIFO, and moved
+the mean rank of severe cases from **42.8** to **3**.
+
+> The notebooks in this repository are a **later pipeline** that adds VinDr-Mammo to the
+> training corpus and rebuilds report processing, splitting, and evaluation. It trains a
+> different adapter with a different prompt and does **not** reproduce the results above.
+
+Published adapter: `chocoCaro/medgemma-1.5-4b-it-sft-lora-dmid`.
+
+## Running the notebooks
+
+Everything is written for Google Colab with Drive mounted.
+
+1. Populate the Drive layout above with DMID and VinDr-Mammo, and place
+   `prompts-cot-zeroshot.yaml` in `main/config/`.
+2. Point `ROOT_DIR` in each notebook at that folder.
+3. Add a Colab secret named `HF_TOKEN` with access to the MedGemma model.
+4. Run notebooks 1–3 on a CPU runtime, then 4–5 on a GPU runtime.
+
+Dependencies are installed in-notebook: `transformers`, `trl`, `peft`, `bitsandbytes`,
+`datasets`, `evaluate`, `rouge-score`, `scikit-learn`, `opencv-python`, `matplotlib`.
 
 ## Team
 
@@ -161,4 +174,4 @@ AutoMammo uses a fine-tuned **MedGemma 1.5 4B-it** model (`chocoCaro/medgemma-1.
 
 ## License
 
-This project is for academic and research purposes.
+For academic and research purposes.
