@@ -2,168 +2,211 @@
 
 **Density & BI-RADS–Aware Triage and Report Generation (DB-ATRG)**
 
-Research code for fine-tuning [MedGemma 1.5 4B-it](https://ai.google.dev/gemma/docs/medgemma)
-to generate structured mammography reports from a single 2D view, and to estimate the two
-biomarkers that drive urgency triage — **ACR breast density** and **BI-RADS category**.
-
-> **Scope.** This repository is the experimentation pipeline only. The FastAPI inference
-> server and React worklist UI that previously lived here have been removed; what remains is
-> the notebook chain that builds the dataset, fine-tunes the model, and evaluates it.
+Research pipeline for fine-tuning [MedGemma 1.5 4B-it](https://ai.google.dev/gemma/docs/medgemma) to generate structured mammography reports from a single 2D mammographic view, and estimating the two clinical biomarkers that drive urgency triage: **ACR breast density** and **BI-RADS category**.
 
 ---
 
-## Motivation
+## What This Project Does
 
-Screening mammography is typically read First-In, First-Out. That ordering ignores diagnostic
-complexity: in dense breast tissue, lesions can be obscured by overlying fibroglandular tissue
-("masking bias"), so the cases most at risk of a missed or delayed diagnosis are not the ones
-read first.
+Screening mammography interpretations are conventionally conducted in a **First-In, First-Out (FIFO)** sequence. This ordering overlooks critical variation in diagnostic complexity: in dense fibroglandular breast tissue, lesions can be masked ("masking bias"), significantly increasing the risk of delayed or missed diagnoses.
 
-DB-ATRG estimates density and severity *before* formal radiologist review, and uses them to
-reorder the worklist:
+**DB-ATRG** infers breast composition and diagnostic severity directly from the screening mammogram prior to formal radiologist interpretation, dynamically reordering the screening worklist through a two-phase protocol:
 
-- **Phase I — density flagging.** Examinations classified **ACR D** (extremely dense) are
-  flagged for supplemental screening and complexity-aware review.
-- **Phase II — urgency ranking.** Remaining cases are ordered by a cumulative urgency score
+- **Phase I — Density Flagging (Complexity Routing):**
+  Examinations classified as **ACR D** (extremely dense tissue) are identified for immediate complexity routing, prioritizing them for supplemental screening (such as ultrasound or MRI) and specialized review.
+- **Phase II — Urgency Ranking (Priority Queue):**
+  Remaining examinations are prioritized by an exponential urgency score:
 
-  $$S = \sum_{i=1}^{N} (B_i)^k - D$$
+  $$
+  S = \sum_{i=1}^{N} (B_i)^k + D
+  $$
 
-  where $B_i$ is the BI-RADS category of each finding, $N$ the number of abnormalities, $k$ an
-  exponential weight (default 2), and $D$ the ACR density value (A=1, B=2, C=3). Higher $S$
-  means higher clinical priority.
+  where:
 
-The full rationale, impact case, and published evaluation are in [`writeup.md`](writeup.md).
+  - $B_i \in \{1, 2, 3, 4, 5\}$ is the BI-RADS category of finding $i$,
+  - $N$ is the total number of detected abnormalities,
+  - $k$ is the severity exponent (default $k = 2$),
+  - $D$ is the numeric ACR density value ($A=1, B=2, C=3$).
 
-## Repository layout
+Higher scores ($S$) indicate higher clinical urgency, moving high-risk cases (BI-RADS 4/5) to the front of the queue to reduce time-to-diagnosis for malignancies.
 
-```text
-auto-mammo/
-├── config/
-│   └── prompts-cot-zeroshot.yaml      # `zero_shot` is the prompt used for training + eval
-├── notebooks/
-│   ├── medgemma-image-processing.ipynb    # 1. DMID .tif → breast-cropped .png
-│   ├── medgemma-report-processing.ipynb   # 2. DMID + VinDr reports → one canonical template
-│   ├── medgemma-split.ipynb               # 3. Stratified train/val/test DatasetDict
-│   ├── medgemma-train-eval.ipynb          # 4. QLoRA fine-tune + held-out evaluation
-│   └── medgemma-analysis.ipynb            # 5. Confusion matrices, calibration, figures
-├── README.md
-└── writeup.md
-```
+---
 
-## The pipeline
+## How to Download Data
 
-Run the notebooks in order. Each writes its output to Google Drive for the next to pick up.
+This project utilizes two benchmark datasets. Neither dataset is redistributed in this repository; obtain them directly from their official sources:
 
-| # | Notebook | Runtime | In → Out |
-| --- | --- | --- | --- |
-| 1 | `medgemma-image-processing` | CPU | DMID `.tif` → `.png`: 5-px border crop, intensity rescale to 8-bit, breast-region crop, resize to 912×1520. VinDr uses the released Mammo-CLIP PNGs and skips this step. |
-| 2 | `medgemma-report-processing` | CPU | DMID free-text reports are reformatted, and VinDr reports are synthesised from its label CSVs, into **one canonical template** so the model sees a single surface form. |
-| 3 | `medgemma-split` | CPU | Merged corpus → stratified `DatasetDict`. Validation and test are fixed at 1,000 records each; train is rebalanced BI-RADS-primary / ACR-secondary, with augmentation flagged on oversampled duplicates only. |
-| 4 | `medgemma-train-eval` | **GPU** | QLoRA fine-tune, then generation on the held-out test split with closed-set ACR/BI-RADS probabilities, imbalance-aware metrics, and calibration. |
-| 5 | `medgemma-analysis` | CPU | Confusion matrices, per-finding detection, split composition, reliability diagrams, ordinal and clinical-safety metrics. |
+### 1. DMID (Digital Mammography Imaging Dataset)
 
-### Canonical report format
+- **Source:** [Figshare Repository (doi:10.6084/m9.figshare.24522883.v2)](https://doi.org/10.6084/m9.figshare.24522883.v2)
+- **Contents:** 510 high-resolution mammograms accompanied by free-text diagnostic reports written by radiologists.
+- **Files to download:**
+  - Full-resolution `.tif` / `.tiff` mammogram images.
+  - Radiologist diagnostic reports in `.txt` format.
 
-Both corpora are normalised to the same layout, which keeps the target machine-parseable:
+### 2. VinDr-Mammo
 
-```text
-Breast Composition: <density description> (ACR <A|B|C|D>).
+- **Source:** [www.kaggle.com/datasets/shantanughosh/vindr-mammogram-dataset-dicom-to-png](https://www.kaggle.com/datasets/shantanughosh/vindr-mammogram-dataset-dicom-to-png)
+- **Contents:** 20,000 mammographic views across 5,000 studies annotated for breast density and findings.
+- **Files to download:**
+  - `breast-level_annotations.csv`
+  - `finding_annotations.csv`
+  - Preprocessed 8-bit Mammo-CLIP PNG images (breast-extracted and normalized, structured as `<study_id>/<image_id>.png`).
 
-BI-RADS: <comma-separated categories, e.g. "3" or "3, 5">
+---
 
-Findings:
-- <finding description, ending with (BI-RADS <value>) when abnormal>
-- <finding description>
-```
+## How to Save Data into Correct Directory
 
-Asymmetry findings are excluded from both corpora by design — a single mammographic view
-cannot establish asymmetry.
+Store all project files in your Google Drive under a unified root directory: `MyDrive/MedGemma2026/main/`.
 
-## Data
+1. **Place raw DMID files:**
 
-| Dataset | Role | Notes |
-| --- | --- | --- |
-| [DMID](https://doi.org/10.6084/m9.figshare.24522883.v2) | Reports + images | 510 paired high-resolution mammograms with radiologist-written diagnostic reports. |
-| [VinDr-Mammo](https://doi.org/10.13026/br2v-7517) | Images + labels | 20,000 images across 5,000 studies. Reports are **synthesised** from the breast-level and finding annotations into the DMID template. |
+   - Put raw DMID `.tif` / `.tiff` images into:`data/dmid/images-original/`
+   - Put raw DMID `.txt` reports into:
+     `data/dmid/reports-original/`
+2. **Place raw VinDr-Mammo files:**
 
-Neither dataset is redistributed here — obtain both from their sources.
+   - Put `breast-level_annotations.csv` into:`data/vindr-mammo/breast-level_annotations.csv`
+   - Put `finding_annotations.csv` into:`data/vindr-mammo/finding_annotations.csv`
+   - Put Mammo-CLIP PNG images into:
+     `data/vindr-mammo/images-processed/<study_id>/<image_id>.png`
+3. **Place configuration:**
 
-### Expected Drive layout
+   - Put `prompts-cot-zeroshot.yaml` into:
+     `config/prompts-cot-zeroshot.yaml`
 
-The notebooks read from a single root (`ROOT_DIR` in each notebook's config cell), laid out as:
+> [!NOTE]
+> Processed folders (`data/dmid/images-processed/`, `data/dmid/reports-processed/`, `data/vindr-mammo/reports/`, `data/split/`, and `results/`) will be generated automatically as you run the pipeline notebooks.
+
+---
+
+## Expected Drive Layout
+
+Ensure your Google Drive is organized as follows:
 
 ```text
 MedGemma2026/main/
 ├── config/
-│   └── prompts-cot-zeroshot.yaml
+│   └── prompts-cot-zeroshot.yaml           # Zero-shot structured prompt
 ├── data/
 │   ├── dmid/
-│   │   ├── images-original/       # .tif source
-│   │   ├── images-processed/      # .png, written by notebook 1
-│   │   ├── reports-original/      # .txt source
-│   │   └── reports-processed/     # .txt, written by notebook 2
+│   │   ├── images-original/                # Downloaded DMID .tif/.tiff files
+│   │   ├── images-processed/               # Generated by Notebook 1 (cropped .png)
+│   │   ├── reports-original/               # Downloaded DMID .txt reports
+│   │   └── reports-processed/              # Generated by Notebook 2 (canonical format)
 │   ├── vindr-mammo/
-│   │   ├── images-processed/<study_id>/<image_id>.png
-│   │   ├── reports/               # written by notebook 2
-│   │   ├── breast-level_annotations.csv
-│   │   └── finding_annotations.csv
-│   └── split/                     # DatasetDict, written by notebook 3
-└── results/                       # predictions + metrics, written by notebook 4
+│   │   ├── breast-level_annotations.csv    # Downloaded from PhysioNet
+│   │   ├── finding_annotations.csv         # Downloaded from PhysioNet
+│   │   ├── images-processed/               # Downloaded Mammo-CLIP PNGs (<study_id>/<image_id>.png)
+│   │   └── reports/                        # Generated by Notebook 2 (synthesized reports)
+│   └── split/                              # Generated by Notebook 3 (HuggingFace DatasetDict)
+├── notebooks/
+│   ├── medgemma-image-processing.ipynb     # 1. Image preprocessing
+│   ├── medgemma-report-processing.ipynb    # 2. Report normalization & synthesis
+│   ├── medgemma-split.ipynb                # 3. Stratified train/val/test splitting
+│   ├── medgemma-train-eval.ipynb           # 4. QLoRA fine-tuning & model evaluation
+│   └── aware-triage-method.ipynb           # 5. Worklist priority queue simulation
+└── results/                                # Generated by Notebooks 4 & 5
+    ├── eval_output.txt
+    ├── eval_predictions.jsonl
+    ├── eval_metrics.json
+    └── eval_predictions_100_2/
+        ├── 100-2-random_cases.csv
+        ├── 100-2-treated_cases.csv
+        ├── 100-2-phase1_acr_d.csv
+        ├── 100-2-merged_analysis.csv
+        └── 100-2-analysis.png
 ```
 
-## Model & training
+---
 
-- **Base:** `google/medgemma-1.5-4b-it` — a vision-language model whose MedSigLIP encoder is
-  pre-trained on 33M medical image-text pairs.
-- **Adaptation:** QLoRA — 4-bit NF4 weights with double quantization, bf16 compute; LoRA rank
-  16 over all linear layers, plus `lm_head` and `embed_tokens`.
-- **Batching:** per-device batch 8 × gradient accumulation 32 (effective 256), linear schedule,
-  `eval_loss` on the validation split for checkpoint selection.
-- **Prompt:** a single fixed structured prompt (`zero_shot` in
-  [`config/prompts-cot-zeroshot.yaml`](config/prompts-cot-zeroshot.yaml)) specifying the ACR
-  and BI-RADS lexicons and the exact output format. The same prompt is used for training,
-  validation loss, and test generation.
+## What the Notebooks Do
 
-A `chain_of_thought` variant is drafted in the same file for a future ablation; it is not
-loaded by any notebook.
+The pipeline consists of five notebooks executed sequentially:
 
-## Results
+### 1. `medgemma-image-processing.ipynb`
 
-The table below is the **published evaluation** — MedGemma 1.5 4B-it fine-tuned on DMID only,
-compared against the MedGemma 1.0 AMRG baseline (Sung et al., 2025). Full details are in the
-preprint ([doi:10.64898/2026.07.22.26358655](https://doi.org/10.64898/2026.07.22.26358655)):
+- **Purpose:** Standardizes raw DMID high-resolution TIFF images to match the Mammo-CLIP vision format.
+- **Operations:** Crops 5-pixel borders, rescales intensity to the 8-bit dynamic range $[0, 255]$, applies breast segmentation (`ExtractBreast`), and resizes images to canonical dimensions ($912 \times 1520$).
+- **Output:** Saves cropped PNGs to `data/dmid/images-processed/`. (VinDr-Mammo already uses Mammo-CLIP PNGs and skips this step).
 
-| Metric | AMRG Baseline (MedGemma 1.0) | DB-ATRG (MedGemma 1.5) |
-| --- | --- | --- |
-| BLEU-4 | N/A | **0.4730** |
-| ROUGE-L | 0.4968 | **0.8650** |
-| METEOR | 0.5541 | **0.9001** |
-| Word-Level F1 | 0.4978 | **0.6789** |
-| BI-RADS Accuracy | 0.3529 | **0.4276** |
-| ACR Density Accuracy | 0.4902 | **0.7039** |
+### 2. `medgemma-report-processing.ipynb`
 
-On a simulated cohort of 100 cases, the DB-ATRG priority queue surfaced **every** BI-RADS 4/5
-malignancy within the first **20%** of the reading workload versus **40%** for FIFO, and moved
-the mean rank of severe cases from **42.8** to **3**.
+- **Purpose:** Harmonizes free-text DMID reports and structured VinDr-Mammo CSV annotations into one unified, machine-parseable clinical report format:
 
-> The notebooks in this repository are a **later pipeline** that adds VinDr-Mammo to the
-> training corpus and rebuilds report processing, splitting, and evaluation. It trains a
-> different adapter with a different prompt and does **not** reproduce the results above.
+  ```text
+  Breast Composition: <density description> (ACR <A|B|C|D>).
 
-Published adapter: `chocoCaro/medgemma-1.5-4b-it-sft-lora-dmid`.
+  BI-RADS: <comma-separated categories, e.g. "3" or "3, 5">
 
-## Running the notebooks
+  Findings:
+  - <finding description, ending with (BI-RADS <value>) when abnormal>
+  - <finding description>
+  ```
 
-Everything is written for Google Colab with Drive mounted.
+- **Operations:** Normalizes DMID report headers/lexicons and synthesizes reports for VinDr-Mammo from `breast-level_annotations.csv` and `finding_annotations.csv` (excluding asymmetric densities which cannot be assessed on single views).
+- **Output:** Saves standardized `.txt` reports to `data/dmid/reports-processed/` and `data/vindr-mammo/reports/`.
 
-1. Populate the Drive layout above with DMID and VinDr-Mammo, and place
-   `prompts-cot-zeroshot.yaml` in `main/config/`.
-2. Point `ROOT_DIR` in each notebook at that folder.
-3. Add a Colab secret named `HF_TOKEN` with access to the MedGemma model.
-4. Run notebooks 1–3 on a CPU runtime, then 4–5 on a GPU runtime.
+### 3. `medgemma-split.ipynb`
 
-Dependencies are installed in-notebook: `transformers`, `trl`, `peft`, `bitsandbytes`,
-`datasets`, `evaluate`, `rouge-score`, `scikit-learn`, `opencv-python`, `matplotlib`.
+- **Purpose:** Constructs an aligned, leak-free multimodal dataset.
+- **Operations:** Pairs every processed image with its canonical report. Builds a stratified 70/15/15 train/validation/test split using BI-RADS primary and ACR secondary strata (validation and test fixed at 1,000 samples each; train rebalanced with augmentation flags).
+- **Output:** Saves a HuggingFace `DatasetDict` to `data/split/`.
+
+### 4. `medgemma-train-eval.ipynb`
+
+- **Purpose:** Fine-tunes MedGemma and evaluates diagnostic report generation.
+- **Operations:**
+  - Fine-tunes `google/medgemma-1.5-4b-it` using QLoRA (4-bit NF4 quantization, bf16 compute, LoRA rank 16 applied across all linear projections, `lm_head`, and `embed_tokens`).
+  - Trains with per-device batch size 8 and gradient accumulation steps 32 (effective batch size 256) tracking validation loss for best-model checkpointing.
+  - Evaluates greedy text generation on the held-out test split, extracting closed-set prediction probabilities for ACR density and BI-RADS.
+  - Computes natural language generation metrics (ROUGE-L, BLEU-4, METEOR, word-level F1) and clinical classification metrics (accuracy, macro-F1, balanced accuracy with 95% bootstrap confidence intervals).
+- **Output:** Saves `eval_predictions.jsonl`, `eval_output.txt`, and `eval_metrics.json` to `results/`.
+
+### 5. `aware-triage-method.ipynb`
+
+- **Purpose:** Simulates and visualizes the clinical worklist triage system using model-generated predictions.
+- **Operations:**
+  - Loads predictions directly from `results/eval_predictions.jsonl`.
+  - Implements Phase I (flagging ACR D cases for complexity review) and Phase II (prioritizing remaining examinations by the urgency formula $S$).
+  - Simulates comparative queue dynamics between the DB-ATRG Treated Priority Queue and the standard Random (FIFO) Queue baseline.
+  - Generates comprehensive triage metrics (high-risk BI-RADS 4/5 capture in the top 10%, mean rank shift, cumulative discovery curves).
+- **Output:** Saves ranking CSVs and a multi-panel publication-ready visualization (`analysis.png`) in `results/eval_predictions_100_2/`.
+
+---
+
+## How to Run the Notebooks
+
+### Prerequisites
+
+1. **Google Drive:** Mount your Google Drive where the project directory is located (`/content/drive/MyDrive/MedGemma2026/main`).
+2. **HuggingFace Access:**
+   - Accept the license agreement on the official HuggingFace model page: [google/medgemma-1.5-4b-it](https://huggingface.co/google/medgemma-1.5-4b-it).
+   - In Google Colab, add a Secret named `HF_TOKEN` containing your HuggingFace user access token with read access.
+
+### Execution Order & Hardware Configurations
+
+Run the notebooks strictly in numerical order with the designated Colab runtime:
+
+| Step | Notebook | Runtime Configuration | Hardware Specs |
+| :---------: | :----------------------------------- | :-------------------: | :------------------------------- |
+| **1** | `medgemma-image-processing.ipynb` | **CPU** | Standard CPU Runtime |
+| **2** | `medgemma-report-processing.ipynb` | **CPU** | Standard CPU Runtime |
+| **3** | `medgemma-split.ipynb` | **CPU** | Standard CPU Runtime |
+| **4** | `medgemma-train-eval.ipynb` | **GPU** | **NVIDIA A100 (High-RAM)** |
+| **5** | `aware-triage-method.ipynb` | **CPU** | Standard CPU Runtime |
+
+> [!IMPORTANT]
+> **Notebook 4 (`medgemma-train-eval.ipynb`) requires an NVIDIA A100 GPU with High-RAM enabled.**
+> The vision encoder (MedSigLIP) and 4B-parameter language model operate at high image resolutions ($912 \times 1520$). Lesser GPUs (such as T4 or V100) will encounter CUDA out-of-memory errors during gradient accumulation and generation scoring.
+
+In-notebook installation cells automatically manage all required Python dependencies:
+
+- `transformers`, `trl`, `peft`, `bitsandbytes`, `accelerate`
+- `datasets`, `evaluate`, `rouge-score`
+- `scikit-learn`, `opencv-python`, `matplotlib`, `pandas`, `numpy`
+
+---
 
 ## Team
 
@@ -172,6 +215,8 @@ Dependencies are installed in-notebook: `transformers`, `trl`, `peft`, `bitsandb
 - **Ngo Tan Dat Bui** — Researcher
 - **Dr. Russell Jeter** — Advisor
 
+---
+
 ## License
 
-For academic and research purposes.
+This software and research code are distributed for academic and research purposes.
