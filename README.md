@@ -139,13 +139,13 @@ MedGemma2026/main/
 
 Open each notebook in Colab from the table below, set the runtime (**Runtime → Change runtime type**), and choose **Run all**. Run them in order, because each notebook reads what the previous one wrote. To keep your own edits, use **File → Save a copy in Drive**.
 
-| # | Notebook | Open | Runtime | What it does | How to check it worked |
-| :-: | :-- | :-: | :-- | :-- | :-- |
-| 1 | `medgemma-image-processing.ipynb` | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/vanthienphan2004/auto-mammo/blob/main/notebooks/medgemma-image-processing.ipynb) | CPU | Converts the DMID TIFFs into PNGs in the Mammo-CLIP format | The last line prints `processed=… skipped(existing)=…`, and `data/dmid/images-processed/` fills with PNGs |
-| 2 | `medgemma-report-processing.ipynb` | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/vanthienphan2004/auto-mammo/blob/main/notebooks/medgemma-report-processing.ipynb) | CPU | Rewrites the DMID reports and builds VinDr reports in one shared format | Prints `Reformatted N DMID reports` and `Wrote N VinDr reports` |
-| 3 | `medgemma-split.ipynb` | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/vanthienphan2004/auto-mammo/blob/main/notebooks/medgemma-split.ipynb) | CPU | Pairs images with reports and builds the train / validation / test splits | The last line prints the split sizes; validation and test have about 1,000 records each |
-| 4 | `medgemma-train-eval.ipynb` | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/vanthienphan2004/auto-mammo/blob/main/notebooks/medgemma-train-eval.ipynb) | **A100 GPU, High-RAM** | Fine-tunes MedGemma, then generates and scores reports for the test split | Prints the metrics, then `Saved:` with three files in `results/` |
-| 5 | `aware-triage-method.ipynb` | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/vanthienphan2004/auto-mammo/blob/main/notebooks/aware-triage-method.ipynb) | CPU | Runs the triage simulation on the model's predictions | Prints `Plot saved -> …/eval_predictions_100_2/100-2-analysis.png` |
+| # | Notebook | Runtime | What it does | How to check it worked |
+| :-: | :-- | :-: | :-- | :-- |
+| 1 | `medgemma-image-processing.ipynb` | CPU | Converts the DMID TIFFs into PNGs in the Mammo-CLIP format | The last line prints `processed=… skipped(existing)=…`, and `data/dmid/images-processed/` fills with PNGs |
+| 2 | `medgemma-report-processing.ipynb` | CPU | Rewrites the DMID reports and builds VinDr reports in one shared format | Prints `Reformatted N DMID reports` and `Wrote N VinDr reports` |
+| 3 | `medgemma-split.ipynb` | CPU | Pairs images with reports and builds the train / validation / test splits | The last line prints the split sizes; validation and test have about 1,000 records each |
+| 4 | `medgemma-train-eval.ipynb` | **A100 GPU, High-RAM** | Fine-tunes MedGemma, then generates and scores reports for the test split | Prints the metrics, then `Saved:` with three files in `results/` |
+| 5 | `aware-triage-method.ipynb` | CPU | Runs the triage simulation on the model's predictions | Prints `Plot saved -> …/eval_predictions_100_2/100-2-panel[1-5]_*.png` |
 
 Good to know:
 
