@@ -115,7 +115,11 @@ MedGemma2026/main/
         ├── 100-2-treated_cases.csv
         ├── 100-2-phase1_acr_d.csv
         ├── 100-2-merged_analysis.csv
-        └── 100-2-analysis.png
+        ├── 100-2-panel1_score_vs_birads.png
+        ├── 100-2-panel2_queue_position.png
+        ├── 100-2-panel3_rank_shift.png
+        ├── 100-2-panel4_cumulative_capture.png
+        └── 100-2-panel5_metrics_table.png
 ```
 
 ---
@@ -167,11 +171,17 @@ The pipeline consists of five notebooks executed sequentially:
 
 - **Purpose:** Simulates and visualizes the clinical worklist triage system using model-generated predictions.
 - **Operations:**
-  - Loads predictions directly from `results/eval_predictions.jsonl`.
-  - Implements Phase I (flagging ACR D cases for complexity review) and Phase II (prioritizing remaining examinations by the urgency formula $S$).
-  - Simulates comparative queue dynamics between the DB-ATRG Treated Priority Queue and the standard Random (FIFO) Queue baseline.
-  - Generates comprehensive triage metrics (high-risk BI-RADS 4/5 capture in the top 10%, mean rank shift, cumulative discovery curves).
-- **Output:** Saves ranking CSVs and a multi-panel publication-ready visualization (`analysis.png`) in `results/eval_predictions_100_2/`.
+  - Loads predictions directly from `results/eval_predictions.jsonl`, filtering for examinations with concordant predictions across both BI-RADS and ACR density (`max_birads` and `acr`).
+  - Implements Phase I (flagging ACR D cases for supplemental complexity review) and Phase II (prioritizing remaining examinations by the urgency score formula $S$).
+  - Simulates comparative queue dynamics between the DB-ATRG Treated Priority Queue and an unbiased Random intake queue (constructed using an explicit seeded shuffle rather than index-sorted order to eliminate FIFO stratification bias).
+  - Evaluates queue performance against a 1,000-shuffle Monte Carlo permutation baseline, reporting empirical mean $\pm$ standard deviation intervals for capture rate, queue position, and mean rank.
+  - Measures clinical efficacy in the top 20% review window (high-risk BI-RADS 4/5 capture rate, average urgency score, and rank promotion shifts).
+- **Output:** Saves ranking CSVs and 5 publication-ready individual figure panels in `results/eval_predictions_100_2/`:
+  - `panel1_score_vs_birads.png` (Urgency score vs. max BI-RADS category scatter plot)
+  - `panel2_queue_position.png` (Queue position distribution of high-risk cases)
+  - `panel3_rank_shift.png` (Boxplot of rank shifts by BI-RADS)
+  - `panel4_cumulative_capture.png` (Cumulative high-risk discovery curve with Monte Carlo $\pm 1\sigma$ confidence band and Clinical Advantage Gap shading)
+  - `panel5_metrics_table.png` (Comprehensive performance metrics summary table)
 
 ---
 
